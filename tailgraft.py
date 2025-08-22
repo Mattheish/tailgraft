@@ -9,53 +9,42 @@ flags = [
     "tailscale",
     "up",
     "--ssh",
-]
+] 
 hostname = ""
-
 
 def lsblk_linux():
     return json.loads(os.popen("lsblk --json").read())
 
-
 def find_user_data():
-    if sys.platform == 'darwin':
-        for root, dirs, files in os.walk('/Volumes'):
-            for dir in dirs:
-                if os.path.isfile(os.path.join(root, dir, 'user-data')):
-                    return os.path.join(root, dir, 'user-data')        
-    elif sys.platform == 'linux':
-        devices = lsblk_linux()['blockdevices']
-
-        for dev in devices:
-            if dev["mountpoint"] is not None and os.path.isfile(os.path.join(dev["mountpoint"], 'user-data')):
-                return os.path.join(dev["mountpoint"], 'user-data')
-
-            if dev["children"] is not None:
-                for child in dev["children"]:
-                    if child["mountpoint"] is not None and os.path.isfile(os.path.join(child["mountpoint"], 'user-data')):
-                        return os.path.join(child["mountpoint"], 'user-data')
-
-    for root, dirs, files in os.walk('/Volumes'):
-        for dir in dirs:
-            if os.path.isfile(os.path.join(root, dir, 'user-data')):
-                return os.path.join(root, dir, 'user-data')
+    # Linux-only: scan mounted block devices for a 'user-data' file
+    devices = lsblk_linux().get('blockdevices', [])
+    for dev in devices:
+        mountpoint = dev.get("mountpoint")
+        if mountpoint and os.path.isfile(os.path.join(mountpoint, 'user-data')):
+            return os.path.join(mountpoint, 'user-data')
+        children = dev.get("children")
+        if children:
+            for child in children:
+                cmount = child.get("mountpoint")
+                if cmount and os.path.isfile(os.path.join(cmount, 'user-data')):
+                    return os.path.join(cmount, 'user-data')
     return None
-
 
 def prompt_user(prompt, allowed_replies = []):
     while True:
         reply = input(prompt)
-        if allowed_replies != [] and reply in allowed_replies:
-            return reply
+        if allowed_replies != []:
+            if reply in allowed_replies:
+                return reply
+            else:
+                print("Invalid reply. Please try again.")
         else:
-            print("Invalid reply. Please try again.")
-
+            return reply
 
 def check_root():
     if os.geteuid() != 0:
         print("This script must be run as root. Re-executing with sudo...")
         os.execvp('sudo', ['sudo', 'python3'] + sys.argv)
-
 
 def main():
     check_root()
@@ -66,10 +55,7 @@ def main():
 
     print("Found user-data file at {}".format(user_data_fname))
 
-    be_exit_node = prompt_user("Would you like this device to be an exit node? (y/n): ", ['y', 'n']) == 'y'
-    if be_exit_node:
-        flags.append("--advertise-exit-node")
-        print("This device will be an exit node.")
+    # Removed exit node prompt and configuration
 
     authkey = input("Please enter your Tailscale authkey: ")
     flags.append("--authkey={}".format(authkey))
@@ -82,13 +68,12 @@ def main():
 
     with open(user_data_fname, 'a') as f:
         f.write("runcmd:\n")
-        f.write("""  - [ "sh", "-c", "curl -fsSL https://tailscale.com/install.sh | sh" ]""")
+        f.write("  - [ \"sh\", \"-c\", \"curl -fsSL https://tailscale.com/install.sh | sh\" ]\")
         f.write("\n")
-        f.write("""  - [ "sh", "-c", "echo 'net.ipv4.ip_forward = 1' | sudo tee -a /etc/sysctl.d/99-tailscale.conf && echo 'net.ipv6.conf.all.forwarding = 1' | sudo tee -a /etc/sysctl.d/99-tailscale.conf && sudo sysctl -p /etc/sysctl.d/99-tailscale.conf" ]""")
-        f.write("\n")
+        # Removed ip_forward and IPv6 forwarding configuration as it's exit-node related
         f.write("  - {}\n".format(json.dumps(flags)))
         if hostname != "":
-            f.write("""  - [ "sh", "-c", "sudo hostnamectl hostname {}" ]""".format(hostname))
+            f.write("  - [ \"sh\", \"-c\", \"sudo hostnamectl hostname {}\" ]\".format(hostname))
             f.write("\n")
 
     print("Tailscale will be installed on boot. Please eject your SD card and boot your raspi.")
